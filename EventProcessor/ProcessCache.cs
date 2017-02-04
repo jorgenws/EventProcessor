@@ -1,5 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 
 namespace EventProcessor
 {
@@ -13,6 +16,18 @@ namespace EventProcessor
         {
             _documents = new Dictionary<Type, DocumentDictionary>();
             _documentStore = documentStore;
+        }
+
+        public void Preload(Type documentType, List<Guid> documentIds)
+        {
+            var documents = _documents[documentType];
+            documents.Preload(documentIds);
+        }
+
+        public List<IDocument> Load(Type documentType, List<Guid> documentIds)
+        {
+            var documents = _documents[documentType];
+            return documents.Load(documentIds);
         }
 
         internal class DocumentDictionary
@@ -59,31 +74,36 @@ namespace EventProcessor
                 }
             }
 
-            public IEnumerable<IDocumentWrapper> Load(List<Guid> documentIds)
+            public List<IDocument> Load(List<Guid> documentIds)
             {
                 var externalDocuments = new List<Guid>();
-                var result = new List<IDocumentWrapper>();
+                var result = new List<IDocument>();
 
                 lock (_lock)
                 {
-
                     foreach (var documentId in documentIds)
                     {
                         if (_documents.ContainsKey(documentId))
-                            result.Add(_documents[documentId]);
+                        {
+                            var document = _documents[documentId];
+                            result.Add(document.Document());
+                        }
                         else
                             externalDocuments.Add(documentId);
                     }
 
-                    //Get documents that are not loaded yet.
-                    //This might happen if the list of related documents has changed since the Preload
-                    var documents = _documentStore.Load(externalDocuments);
-                    foreach (var document in documents)
+                    //There might be missing documents
+                    if (externalDocuments.Any())
                     {
-                        document.ReadCount++;
-                        _documents.Add(document.Id, document);
+                        //If there are any missing documents start load procedure for those documents
+                        Preload(externalDocuments);
+
+                        foreach (var documentId in externalDocuments)
+                        {
+                            var document = _documents[documentId];
+                            result.Add(document.Document());
+                        }
                     }
-                    result.AddRange(documents);
                 }
 
                 return result;
@@ -136,12 +156,25 @@ namespace EventProcessor
     internal class DocumentWrapper : IDocumentWrapper
     {
         public Guid Id { get; set; }
+        public Type DocumentType { get; set; }
         public byte[] SerializedDocument { get; set; }
+        private IDocument _document;
 
-        public T Document<T>(Guid id) where T : IDocument, new()
+        public IDocument Document()
         {
-            //Add deserialization
-            return new T();
+            if (_document != null)
+                return _document;
+
+            if (SerializedDocument != null)
+            {
+                //deserialize
+            }
+
+            var factory = Expression.Lambda<Func<IDocument>>(Expression.New(DocumentType)).Compile();
+
+            _document = factory();
+            _document.Id = Id;
+            return _document;
         }
 
         public int ReadCount { get; set; }
@@ -152,7 +185,7 @@ namespace EventProcessor
     {
         Guid Id { get; set; }
         byte[] SerializedDocument { get; set; }
-        T Document<T>(Guid id) where T : IDocument, new();
+        IDocument Document();
         int ReadCount { get; set; }
         int WriteCount { get; set; }
     }
