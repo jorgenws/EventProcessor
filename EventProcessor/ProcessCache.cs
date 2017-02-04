@@ -28,7 +28,7 @@ namespace EventProcessor
                 _documentStore = documentStore;
             }
 
-            public void Preload(IEnumerable<Guid> documentIds)
+            public void Preload(List<Guid> documentIds)
             {
                 var externalDocuments = new List<Guid>();
 
@@ -51,10 +51,15 @@ namespace EventProcessor
                         document.ReadCount++;
                         _documents.Add(document.Id, document);
                     }
+
+                    //Add holders for not yet created documents
+                    foreach (var documentId in externalDocuments)
+                        if (!_documents.ContainsKey(documentId))
+                            _documents.Add(documentId, new DocumentWrapper { Id = documentId, ReadCount = 1 });
                 }
             }
 
-            public IEnumerable<IDocumentWrapper> Load(IEnumerable<Guid> documentIds)
+            public IEnumerable<IDocumentWrapper> Load(List<Guid> documentIds)
             {
                 var externalDocuments = new List<Guid>();
                 var result = new List<IDocumentWrapper>();
@@ -70,6 +75,8 @@ namespace EventProcessor
                             externalDocuments.Add(documentId);
                     }
 
+                    //Get documents that are not loaded yet.
+                    //This might happen if the list of related documents has changed since the Preload
                     var documents = _documentStore.Load(externalDocuments);
                     foreach (var document in documents)
                     {
@@ -82,7 +89,7 @@ namespace EventProcessor
                 return result;
             }
 
-            public void UnloadRead(IEnumerable<Guid> documentIds)
+            public void UnloadRead(List<Guid> documentIds)
             {
                 lock (_lock)
                 {
@@ -100,7 +107,7 @@ namespace EventProcessor
                 }
             }
 
-            public void SetWrite(IEnumerable<Guid> documentIds)
+            public void SetWrite(List<Guid> documentIds)
             {
                 lock (_lock)
                 {
@@ -109,7 +116,7 @@ namespace EventProcessor
                 }
             }
 
-            public void FinishedWriting(IEnumerable<Guid> documentIds)
+            public void FinishedWriting(List<Guid> documentIds)
             {
                 lock (_lock)
                 {
@@ -133,6 +140,7 @@ namespace EventProcessor
 
         public T Document<T>(Guid id) where T : IDocument, new()
         {
+            //Add deserialization
             return new T();
         }
 
@@ -156,7 +164,7 @@ namespace EventProcessor
 
     public interface IDocumentStore
     {
-        IEnumerable<IDocumentWrapper> Load(IEnumerable<Guid> documentIds);
-        void Save(IEnumerable<IDocumentWrapper> documents);
+        IEnumerable<IDocumentWrapper> Load(List<Guid> documentIds);
+        void Save(List<IDocumentWrapper> documents);
     }
 }
