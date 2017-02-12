@@ -83,7 +83,7 @@ namespace EventProcessor
 
     internal class ProcessedDocument
     {
-        Guid DocumentId { get; set; }
-        byte[] SerializedDocument { get; set; }
+        public Guid DocumentId { get; set; }
+        public byte[] SerializedDocument { get; set; }
     }
 }

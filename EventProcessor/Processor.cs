@@ -33,7 +33,7 @@ namespace EventProcessor
             foreach (var subscriber in _subscribers)
             {
                 var subscriberPreloadBlock = new TransformBlock<IEvent, IEvent>(e => Preload(processCache, subscriber, e));
-                var subscriberProcessBlock = new TransformBlock<IEvent, SubscriberResult>(e=>Process(processCache, subscriber, e));
+                var subscriberProcessBlock = new TransformBlock<IEvent, SubscriberResult>(e=>Process(processCache, binarySerializer, subscriber, e));
 
                 broadcastBlock.LinkTo(subscriberPreloadBlock, e => subscriber.CanHandleEvent(e.GetType()));
                 subscriberPreloadBlock.LinkTo(subscriberProcessBlock);
@@ -55,7 +55,7 @@ namespace EventProcessor
             return @event;
         }
 
-        private static SubscriberResult Process(ProcessCache cache, ISubscriber subscriber, IEvent @event)
+        private static SubscriberResult Process(ProcessCache cache, IBinarySerializer serializer, ISubscriber subscriber, IEvent @event)
         {
             var documents = cache.Load(subscriber.DocumentType, subscriber.GetDocumentIdsFor(@event));
             subscriber.UpdateDocument(@event, documents);
@@ -63,7 +63,9 @@ namespace EventProcessor
             var processedDocuments = new List<ProcessedDocument>();
             foreach (var document in documents)
             {
-                
+                //TODO: check that it uses the actual type, not the interface type...
+                var serializedDocument = serializer.Serialize(document);
+                processedDocuments.Add(new ProcessedDocument { DocumentId = document.Id, SerializedDocument = serializedDocument });
             }
 
             return new SubscriberResult { SerialNumber = @event.SerialNumber, ProcessedDocuments = processedDocuments };
