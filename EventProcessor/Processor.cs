@@ -17,7 +17,9 @@ namespace EventProcessor
 
         public void Initialize()
         {
-            var processCache = new ProcessCache(_documentStore);
+            IBinarySerializer binarySerializer = new BinarySerializer();
+            var documentFactory = new DocumentFactory(binarySerializer);
+            var processCache = new ProcessCache(_documentStore, documentFactory);
 
             var options = new DataflowBlockOptions { BoundedCapacity = 1000000 };
             var inputBlock = new BufferBlock<IEvent>(options);
@@ -38,9 +40,12 @@ namespace EventProcessor
                 subscriberProcessBlock.LinkTo(processedDocumentsBlock);
             }
 
-            var writeBlock = new ActionBlock<IReadOnlyList<SubscriberResult>>(rs => WriteDocuments(rs));
-
-            //Starts the dynamic batching to ensure that the process doesnt stop while waiting for a batchblock (for example)
+            //The BoundedCapacity is set to one to wait for the write operation to finish before we get a new batch.
+            //This will increase the batch size and performance
+            var writeBlock = new ActionBlock<IReadOnlyList<SubscriberResult>>(rs => WriteDocuments(rs), 
+                                                                              new ExecutionDataflowBlockOptions { BoundedCapacity = 1 });
+            
+            //Starts the dynamic batching to ensure that the process doesnt stop while waiting for a batchblock (for example)            
             Task.Factory.StartNew(()=>BatchItems(processedDocumentsBlock, writeBlock));
         }
 
@@ -58,7 +63,7 @@ namespace EventProcessor
             var processedDocuments = new List<ProcessedDocument>();
             foreach (var document in documents)
             {
-                //serialize and add to processedDocuments
+                
             }
 
             return new SubscriberResult { SerialNumber = @event.SerialNumber, ProcessedDocuments = processedDocuments };

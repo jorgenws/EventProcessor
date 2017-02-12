@@ -1,46 +1,62 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection;
 
 namespace EventProcessor
 {
     internal class ProcessCache
     {
-        private Dictionary<Type, DocumentDictionary> _documents;
+        private ConcurrentDictionary<Type, DocumentDictionary> _documents;
 
         private IDocumentStore _documentStore;
+        private IDocumentFactory _documentFactory;
 
-        public ProcessCache(IDocumentStore documentStore)
-        {
-            _documents = new Dictionary<Type, DocumentDictionary>();
+        public ProcessCache(IDocumentStore documentStore, IDocumentFactory documentFactory)
+        {            
+            _documents = new ConcurrentDictionary<Type, DocumentDictionary>();
             _documentStore = documentStore;
+            _documentFactory = documentFactory;
         }
 
         public void Preload(Type documentType, List<Guid> documentIds)
         {
-            var documents = _documents[documentType];
+            var documents = GetDictionary(documentType);
             documents.Preload(documentIds);
         }
 
         public List<IDocument> Load(Type documentType, List<Guid> documentIds)
         {
-            var documents = _documents[documentType];
+            var documents = GetDictionary(documentType);
             return documents.Load(documentIds);
+        }
+
+        private DocumentDictionary GetDictionary(Type documentType)
+        {
+            if (!_documents.ContainsKey(documentType))
+            {
+                var documentDictionary = new DocumentDictionary(_documentStore, _documentFactory, documentType);
+                _documents.AddOrUpdate(documentType, documentDictionary, (key, oldValue) => documentDictionary);
+            }
+
+            return _documents[documentType];
         }
 
         internal class DocumentDictionary
         {
             private object _lock = new object();
 
+            private Type _documentType;
             private Dictionary<Guid, IDocumentWrapper> _documents;
             private IDocumentStore _documentStore;
+            private IDocumentFactory _documentFactory;
 
-            public DocumentDictionary(IDocumentStore documentStore)
+            public DocumentDictionary(IDocumentStore documentStore, IDocumentFactory documentFactory, Type documentType)
             {
                 _documents = new Dictionary<Guid, IDocumentWrapper>();
                 _documentStore = documentStore;
+                _documentFactory = documentFactory;
+                _documentType = documentType;
             }
 
             public void Preload(List<Guid> documentIds)
@@ -70,7 +86,14 @@ namespace EventProcessor
                     //Add holders for not yet created documents
                     foreach (var documentId in externalDocuments)
                         if (!_documents.ContainsKey(documentId))
-                            _documents.Add(documentId, new DocumentWrapper { Id = documentId, ReadCount = 1 });
+                        {
+                            _documents.Add(documentId, new DocumentWrapper
+                            {
+                                Id = documentId,
+                                Document = _documentFactory.CreateNew(documentId, _documentType),
+                                ReadCount = 1
+                            });
+                        }
                 }
             }
 
@@ -86,7 +109,7 @@ namespace EventProcessor
                         if (_documents.ContainsKey(documentId))
                         {
                             var document = _documents[documentId];
-                            result.Add(document.Document());
+                            result.Add(document.Document);
                         }
                         else
                             externalDocuments.Add(documentId);
@@ -101,7 +124,7 @@ namespace EventProcessor
                         foreach (var documentId in externalDocuments)
                         {
                             var document = _documents[documentId];
-                            result.Add(document.Document());
+                            result.Add(document.Document);
                         }
                     }
                 }
@@ -157,26 +180,7 @@ namespace EventProcessor
     {
         public Guid Id { get; set; }
         public Type DocumentType { get; set; }
-        public byte[] SerializedDocument { get; set; }
-        private IDocument _document;
-
-        public IDocument Document()
-        {
-            if (_document != null)
-                return _document;
-
-            if (SerializedDocument != null)
-            {
-                //deserialize
-            }
-
-            var factory = Expression.Lambda<Func<IDocument>>(Expression.New(DocumentType)).Compile();
-
-            _document = factory();
-            _document.Id = Id;
-            return _document;
-        }
-
+        public IDocument Document { get; set; }
         public int ReadCount { get; set; }
         public int WriteCount { get; set; }
     }
@@ -184,8 +188,7 @@ namespace EventProcessor
     public interface IDocumentWrapper
     {
         Guid Id { get; set; }
-        byte[] SerializedDocument { get; set; }
-        IDocument Document();
+        IDocument Document { get; set; }
         int ReadCount { get; set; }
         int WriteCount { get; set; }
     }
