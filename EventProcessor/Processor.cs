@@ -1,44 +1,94 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 
 namespace EventProcessor
 {
-    public class Processor
+    internal class Processor
     {
-        public void a()
+        IEnumerable<ISubscriber> _subscribers;
+        IDocumentStore _documentStore;
+
+        public Processor(IEnumerable<ISubscriber> subscribers, IDocumentStore documentStore)
         {
-            IDocumentStore documentStore = null;
-            var processCache = new ProcessCache(documentStore);
-
-
-            var options = new DataflowBlockOptions
-            {
-                BoundedCapacity = 1000000
-            };
-
-            var inputBlock = new BufferBlock<IEvent>(options);
-
-            //reflection to find subscribers
-
-            //for subscribers create a transfromblock. Add predicate based on CanHandleEvent.
-            //given the subscriber, we know the document type and given the event we know the documentids
-            //start preload
-
-            //next step is to deserialze the documents that are not deserialized yet.
-
-            //now that we have actual documents we start to update them based on the events.
-
-            //we clone the resulting doucment and send it to be stored with its event serial id number.
-
-
-            //Batching document loading?
-
-            //Batching document storage?
+            _subscribers = subscribers;
+            _documentStore = documentStore;
         }
 
+        public void Initialize()
+        {
+            var processCache = new ProcessCache(_documentStore);
+
+            var options = new DataflowBlockOptions { BoundedCapacity = 1000000 };
+            var inputBlock = new BufferBlock<IEvent>(options);
+
+            var broadcastBlock = new BroadcastBlock<IEvent>(e => e);
+
+            inputBlock.LinkTo(broadcastBlock);
+
+            var processedDocumentsBlock = new BufferBlock<SubscriberResult>(options);
+
+            foreach (var subscriber in _subscribers)
+            {
+                var subscriberPreloadBlock = new TransformBlock<IEvent, IEvent>(e => Preload(processCache, subscriber, e));
+                var subscriberProcessBlock = new TransformBlock<IEvent, SubscriberResult>(e=>Process(processCache, subscriber, e));
+
+                broadcastBlock.LinkTo(subscriberPreloadBlock, e => subscriber.CanHandleEvent(e.GetType()));
+                subscriberPreloadBlock.LinkTo(subscriberProcessBlock);
+                subscriberProcessBlock.LinkTo(processedDocumentsBlock);
+            }
+
+            var writeBlock = new ActionBlock<IReadOnlyList<SubscriberResult>>(rs => WriteDocuments(rs));
+
+            //Starts the dynamic batching to ensure that the process doesnt stop while waiting for a batchblock (for example)
+            Task.Factory.StartNew(()=>BatchItems(processedDocumentsBlock, writeBlock));
+        }
+
+        private static IEvent Preload(ProcessCache cache, ISubscriber subscriber, IEvent @event)
+        {
+            cache.Preload(subscriber.DocumentType, subscriber.GetDocumentIdsFor(@event));
+            return @event;
+        }
+
+        private static SubscriberResult Process(ProcessCache cache, ISubscriber subscriber, IEvent @event)
+        {
+            var documents = cache.Load(subscriber.DocumentType, subscriber.GetDocumentIdsFor(@event));
+            subscriber.UpdateDocument(@event, documents);
+
+            var processedDocuments = new List<ProcessedDocument>();
+            foreach (var document in documents)
+            {
+                //serialize and add to processedDocuments
+            }
+
+            return new SubscriberResult { SerialNumber = @event.SerialNumber, ProcessedDocuments = processedDocuments };
+        }
+
+        private static async Task BatchItems<T>(IReceivableSourceBlock<T> source, ITargetBlock<IReadOnlyList<T>> target)
+        {
+            while (true)
+            {
+                var messages = new List<T>();
+
+                if(!await source.OutputAvailableAsync())
+                {
+                    //source was completed
+                    target.Complete();
+                    return;
+                }
+
+                T item;
+                while (source.TryReceive(out item))
+                    messages.Add(item);
+
+                target.Post(messages);
+            }
+        }
+
+        private static void WriteDocuments(IReadOnlyCollection<SubscriberResult> processedDocuments)
+        {
+            //purge older duplicates
+            //create batch and send to repository
+        }
     }
 }

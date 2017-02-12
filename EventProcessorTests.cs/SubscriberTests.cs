@@ -2,9 +2,6 @@
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace EventProcessorTests
 {
@@ -22,7 +19,9 @@ namespace EventProcessorTests
             subscriber.SetUp();
             subscriber.Build();
 
-            Assert.IsTrue(subscriber.CanHandleEvent(typeof(Event)));
+            var s = subscriber as ISubscriber;
+
+            Assert.IsTrue(s.CanHandleEvent(typeof(Event)));
         }
 
         [Test]
@@ -38,7 +37,9 @@ namespace EventProcessorTests
                 Value = 42
             };
 
-            List<Guid> documentIds = subscriber.GetDocumentIdsFor(@event);
+            var s = subscriber as ISubscriber;
+
+            List<Guid> documentIds = s.GetDocumentIdsFor(@event);
 
             CollectionAssert.Contains(documentIds, _documentId1);
             CollectionAssert.Contains(documentIds, _documentId2);
@@ -63,7 +64,9 @@ namespace EventProcessorTests
             documents.Add(dto1);
             documents.Add(dto2);
 
-            subscriber.UpdateDocument(@event, documents);
+            var s = subscriber as ISubscriber;
+
+            s.UpdateDocument(@event, documents);
 
             Assert.AreEqual(42, dto1.Value);
             Assert.AreEqual(42, dto2.Value);
@@ -86,8 +89,9 @@ namespace EventProcessorTests
 
     public class Event : IEvent
     {
-        public List<Guid> DocumentIds { get; set; }
+        public ulong SerialNumber { get; set; }
 
+        public List<Guid> DocumentIds { get; set; }
         public int Value { get; set; }
     }
 }

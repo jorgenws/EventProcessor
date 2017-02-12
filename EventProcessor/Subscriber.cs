@@ -3,11 +3,13 @@ using System.Collections.Generic;
 
 namespace EventProcessor
 {
-    public abstract class Subscriber<T> where T : IDocument
+    public abstract class Subscriber<T> : ISubscriber where T : IDocument
     {
         private Dictionary<Type, IEventAction> _eventActions;
 
         private List<IEventActionHolder> _holders;
+
+        public Type DocumentType { get { return typeof(T); } }
 
         public Subscriber()
         {
@@ -34,22 +36,30 @@ namespace EventProcessor
             }
         }
 
-        internal bool CanHandleEvent(Type @eventType)
+        bool ISubscriber.CanHandleEvent(Type @eventType)
         {
             return _eventActions.ContainsKey(eventType);
         }
 
-        internal List<Guid> GetDocumentIdsFor(IEvent @event)
+        List<Guid> ISubscriber.GetDocumentIdsFor(IEvent @event)
         {
             Func<IEvent, List<Guid>> getDocuments = _eventActions[@event.GetType()].GetDocumentIds;
             return getDocuments(@event);
         }
 
-        internal void UpdateDocument(IEvent @event, List<IDocument> documents)
+        void ISubscriber.UpdateDocument(IEvent @event, List<IDocument> documents)
         {
             Action<IEvent, List<IDocument>> update = _eventActions[@event.GetType()].ModifyDocument;
             update(@event, documents);
         }
+    }
+
+    internal interface ISubscriber
+    {
+        Type DocumentType { get; }
+        bool CanHandleEvent(Type @eventType);
+        List<Guid> GetDocumentIdsFor(IEvent @event);
+        void UpdateDocument(IEvent @event, List<IDocument> document);
     }
 
     internal class EventAction<T, U> : IEventAction  where T : IEvent where U :IDocument

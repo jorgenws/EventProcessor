@@ -1,4 +1,7 @@
 ﻿namespace EventProcessor
 {
-    public interface IEvent { }
+    public interface IEvent
+    {
+        ulong SerialNumber { get; set; }
+    }
 }
